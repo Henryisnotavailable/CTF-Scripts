@@ -1,0 +1,2 @@
+alias target='source ~/target.sh'
+export targetIP=127.0.0.1
