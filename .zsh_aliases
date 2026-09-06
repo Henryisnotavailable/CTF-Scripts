@@ -1,2 +1,4 @@
 alias target='source ~/target.sh'
 export targetIP=127.0.0.1
+alias reverse='python3 /home/kali/turtler.py -i tun0 --interactive'
+alias turtler='python3 /home/kali/turtler.py'
